@@ -155,6 +155,19 @@ Password, card, SSN, IBAN, API key, secret, token, CSRF, nonce and similar field
 
 To reproduce the v3.3.0 payload exactly, set `payload: 'full'` and `failedPayload: 'full'` and keep `piiMode: 'plain'`. Only the safety fixes listed in `CHANGELOG.md` remain.
 
+## GA4 reporting
+
+GA4 only shows event parameters in reports after you register them in Admin > Custom definitions:
+
+| Parameter (example GA4 name) | Source key | Register as |
+| --- | --- | --- |
+| `form_id`, `form_name`, `form_cta`, `form_position` | same | Custom dimension (event scope) |
+| `failure_reason` | `ec_detection_method` | Custom dimension (event scope) |
+| `failed_fields` | `ec_failed_fields` joined with commas | Custom dimension (event scope) |
+| `failed_field_count` | `ec_failed_field_count` | **Custom metric** (event scope, unit: Standard) |
+
+`ec_failed_field_count` is a number, so register it as a custom metric, not a dimension, or GA4 can't sum or average it. `ec_failed_fields` is an array; join it into a string (for example with a Custom JavaScript variable) before sending it to GA4.
+
 ## Consent
 
 Auto-detected: Google Consent Mode v2, OneTrust, Cookiebot.
