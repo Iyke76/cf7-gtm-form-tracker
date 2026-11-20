@@ -38,6 +38,8 @@ ec_tracker_initialized
 
 `cf7_form_failed` fires on `wpcf7invalid` (validation), `wpcf7spam` (spam blocked) and `wpcf7mailfailed` (mail server error), each with its own `ec_detection_method`, after the visitor has interacted with the form.
 
+By default (`failedPayload: 'minimal'`) a failed event carries no contact data, hashes or field values. It keeps the form metadata, `ec_detection_method`, `ec_failed_fields` (field names only) and `ec_failed_field_count`.
+
 ### Diagnostic events
 
 `ec_form_interaction` fires once per form after the first real input. It carries metadata only, no PII.
@@ -46,23 +48,23 @@ ec_tracker_initialized
 
 ## Payload example
 
+Default settings (`piiMode: 'plain'`, `payload: 'lean'`):
+
 ```js
 {
   event: "cf7_form_success",
-  ec_event_id: "uuid-v4",
-  ec_detection_method: "confirmation_event",
-  ec_tracker_version: "3.3.0-cf7.1",
   ec_name: "Jane Doe",
   ec_first_name: "Jane",
   ec_last_name: "Doe",
   ec_email: "jane@example.com",
   ec_phone: "+15551234567",
-  form_url: "https://example.com/contact",
   form_cta: "Send",
   form_platform: "cf7",
   form_position: "top",
   form_index: 1,
   form_id: "5",
+  ec_event_id: "uuid-v4",
+  ec_detection_method: "confirmation_event",
   ec_submit_attempt: 1,
   ec_time_to_submit_s: 42,
   ec_fast_submit: false,
@@ -75,9 +77,37 @@ ec_tracker_initialized
 }
 ```
 
-With `rawFields: true`, `ec_raw_fields` is added with every captured field and its `_bucket` classification. With `hashPii: true`, `ec_email_sha256` and `ec_phone_sha256` are added.
+- `event` is always the first key.
+- Empty values are left out. `form_url` is only sent when it differs from the current page (thank-you page recall). `ec_tracker_version` and `ec_dedupe_basis` are only sent with `debug: true`.
+- `payload: 'full'` restores the v3.3.0 key set, including the `ec_attribution` object, `ec_first_landing`, `ec_first_referrer`, `ec_first_ts` and `ec_time_to_submit_ms`.
+- With `rawFields: true`, `ec_raw_fields` is added with every captured field and its `_bucket` classification. Pass an array instead (`rawFields: ['service', 'location']`) to send only those fields.
+- With `hashPii: true`, `ec_email_sha256` and `ec_phone_sha256` are added.
+- If a CF7 form has a hidden field named `form_name` (`[hidden form_name "contact-us"]`), its value is sent as `form_name`. A stable label per form purpose keeps GTM triggers working when a form is rebuilt and gets a new ID.
+- Before each push, keys left in the dataLayer by an earlier push that this payload does not set are reset to `undefined`, so a GTM variable never reads another form's values.
 
-When PII consent is denied, PII keys are removed and `ec_pii_redacted: true` is added.
+When PII consent is denied, contact keys, hashes and raw fields are removed and `ec_pii_redacted: true` is added.
+
+## Privacy modes
+
+`piiMode` controls contact data in the payload:
+
+| Mode | Payload | Browser storage |
+| --- | --- | --- |
+| `plain` (default) | Normalized name, email, phone and address keys, as in v3.3.0 | Full form copy in localStorage and sessionStorage for thank-you page recall |
+| `hashed` | No plain contact keys. Email and phone only as `ec_email_sha256` / `ec_phone_sha256` | sessionStorage only, with choice fields, allowlisted fields and the hashes. No plain contact data |
+| `none` | No contact keys and no hashes | sessionStorage only, no contact data |
+
+In `hashed` mode the tracker waits up to `hashWaitMs` (300 ms) for the hash before pushing, so an instant submit still gets its hashes. In `hashed` and `none` mode without a `rawFields` allowlist, `ec_raw_fields` keeps only select, radio and checkbox values.
+
+Recommended for GA4-connected setups that do not need plain contact data in the browser:
+
+```js
+window.EC_FORM_CONFIG = {
+  piiMode: 'hashed',
+  rawFields: ['service', 'location'],
+  strictSuccess: true
+};
+```
 
 ## Quick start in GTM
 
@@ -104,8 +134,13 @@ Edit the config block at the top of the GTM file, or define `window.EC_FORM_CONF
 | Option | Default | What it does |
 | --- | --- | --- |
 | `debug` | `false` | `[EC]` console logs. Testing only |
-| `hashPii` | `false` | Add SHA-256 hashes of email and phone (HTTPS only) |
-| `rawFields` | `false` | Include `ec_raw_fields`. Keep it out of GA4 |
+| `piiMode` | `'plain'` | `'plain'`, `'hashed'` or `'none'`. See Privacy modes |
+| `hashPii` | `false` | Add SHA-256 hashes of email and phone (HTTPS only). Forced on by `piiMode: 'hashed'` |
+| `hashWaitMs` | `300` | Hashed mode: how long to wait for a hash before pushing |
+| `rawFields` | `false` | `true` adds `ec_raw_fields` with every field. An array adds only the named fields. Keep plain values out of GA4 |
+| `payload` | `'lean'` | `'lean'` sends only keys with a use. `'full'` sends the v3.3.0 key set |
+| `failedPayload` | `'minimal'` | `'minimal'` keeps contact data, hashes and field values off failed events. `'full'` restores v3.3.0 behavior |
+| `formNameField` | `'form_name'` | Hidden CF7 field whose value is sent as `form_name` |
 | `dedupe` | `true` | Suppress a repeat success for the same form and person within 5 minutes |
 | `strictSuccess` | `false` | Drop inferred successes (`pagehide`, `form_removed`) |
 | `defaultCountryCode` | `"1"` | Phone fallback when the form has no country field |
@@ -116,7 +151,9 @@ Edit the config block at the top of the GTM file, or define `window.EC_FORM_CONF
 | `submitWindowMs` | `15000` | How long after submit a success signal is accepted |
 | `ttlMs` | `600000` | Freshness window for thank-you recall |
 
-Password, card, SSN, IBAN and similar field names are always redacted.
+Password, card, SSN, IBAN, API key, secret, token, CSRF, nonce and similar field names are always redacted.
+
+To reproduce the v3.3.0 payload exactly, set `payload: 'full'` and `failedPayload: 'full'` and keep `piiMode: 'plain'`. Only the safety fixes listed in `CHANGELOG.md` remain.
 
 ## Consent
 
@@ -135,13 +172,15 @@ window.EC_FORM_CONSENT_CHECK = function () {
 | Consent state | Behavior |
 | --- | --- |
 | `analytics: false` | Nothing fires and nothing is stored. Events queue and replay on grant |
-| `pii: false` | Events fire without PII keys and with `ec_pii_redacted: true` |
+| `pii: false` | Events fire without contact keys, hashes or raw fields, and with `ec_pii_redacted: true` |
 
 If no CMP or override is found, the tracker assumes full consent. Match that to your own legal requirements.
 
 ## PII warning
 
-`ec_name`, `ec_email`, `ec_phone`, the address keys and `ec_raw_fields` are for Enhanced Conversions, Meta CAPI and first-party CRM workflows. **Do not send them to GA4.** GA4's terms prohibit PII in event parameters. Send `form_id`, `form_platform` and `ec_detection_method` to GA4 instead.
+`ec_name`, `ec_email`, `ec_phone`, the address keys and `ec_raw_fields` are for Enhanced Conversions, Meta CAPI and first-party CRM workflows. **Do not send them to GA4.** GA4's terms prohibit PII in event parameters. Send `form_id`, `form_name`, `form_platform` and `ec_detection_method` to GA4 instead.
+
+If nothing on the site needs plain contact data, use `piiMode: 'hashed'` (or `'none'`) so it never reaches the dataLayer or browser storage at all.
 
 ## Detection methods
 
@@ -183,7 +222,7 @@ Returns version, consent state, forms attached, the last event and the active co
 
 ## Version
 
-Current version: `3.3.0-cf7.1`. See `CHANGELOG.md`.
+Current version: `3.4.0-cf7.1`. See `CHANGELOG.md`.
 
 ## License
 
